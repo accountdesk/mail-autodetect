@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: curl, simplexml
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Install Mago
+        run: |
+          curl -sSL https://github.com/carthage-software/mago/releases/latest/download/mago-x86_64-unknown-linux-gnu.tar.gz -o mago.tar.gz
+          tar -xzf mago.tar.gz
+          chmod +x mago
+          sudo mv mago /usr/local/bin/
+
+      - name: Check formatting
+        run: mago fmt --check
+
+      - name: Run linter
+        run: mago lint
+
+      - name: Run static analysis
+        run: mago analyze

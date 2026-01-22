@@ -1,0 +1,146 @@
+# Mail-Autodetect
+
+PHP library for automatic detection of IMAP and SMTP server settings for any domain.
+
+## Installation
+
+### Option 1: Composer
+
+```bash
+composer require accountdesk/mail-autodetect
+```
+
+### Option 2: Manual
+
+Copy `src/AutoDetector.php` into your project and include it:
+
+```php
+require_once 'path/to/AutoDetector.php';
+```
+
+**Requirements:**
+- PHP >= 8.1
+- ext-curl
+- ext-simplexml
+
+## Usage
+
+```php
+use MailAutodetect\AutoDetector;
+
+$detector = new AutoDetector();
+
+// With email address (recommended - enables Microsoft Autodiscover)
+$result = $detector->autoDetect('user@example.com');
+
+// With domain only (without Autodiscover)
+$result = $detector->autoDetect('gmail.com');
+
+print_r($result);
+```
+
+**Output:**
+
+```php
+[
+    'imap' => [
+        [
+            'host' => 'imap.gmail.com',
+            'port' => 993,
+            'ssl' => 'ssl',
+            'auth' => 'OAuth2',
+            'source' => 'mozilla_ispdb',
+            'score' => 95,
+            'sources' => ['mozilla_ispdb'],
+            'match_count' => 1,
+        ],
+        // more candidates...
+    ],
+    'smtp' => [
+        [
+            'host' => 'smtp.gmail.com',
+            'port' => 465,
+            'ssl' => 'ssl',
+            'auth' => 'OAuth2',
+            'source' => 'mozilla_ispdb',
+            'score' => 95,
+            'sources' => ['mozilla_ispdb'],
+            'match_count' => 1,
+        ],
+        // more candidates...
+    ],
+]
+```
+
+## Configuration
+
+```php
+$detector = new AutoDetector([
+    'timeout_http' => 10,  // HTTP requests (default: 10s)
+    'timeout_tcp'  => 3,   // TCP connections (default: 3s)
+    'logger'       => $logger,  // PSR-3 logger (optional)
+]);
+
+// Threshold: stop early when IMAP+SMTP with score > threshold found
+$result = $detector->autoDetect('example.com', threshold: 90);
+```
+
+### Logging (PSR-3)
+
+```php
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
+
+$logger = new Logger('mail-autodetect');
+$logger->pushHandler(new StreamHandler('php://stderr', Logger::DEBUG));
+
+$detector = new AutoDetector(['logger' => $logger]);
+```
+
+Log levels:
+- `info`: Start/end of detection, threshold reached
+- `debug`: Individual strategies, DNS/HTTP requests, cache hits
+- `warning`: HTTP/DNS errors
+
+### Caching
+
+DNS and HTTP results are automatically cached (in-memory per request).
+Multiple queries for the same domain won't trigger duplicate requests.
+
+## Detection Strategies
+
+The library uses multiple strategies in descending reliability:
+
+| # | Strategy | Score | Description |
+|---|----------|-------|-------------|
+| 1 | Mozilla ISPDB | 95 | Thunderbird autoconfig database |
+| 2 | Known MX | 92 | Known providers (Gmail, Outlook, etc.) via MX pattern |
+| 3 | Microsoft Autodiscover | 92 | Exchange/Office 365 (requires email) |
+| 4 | DNS SRV | 90 | RFC 6186 service records |
+| 5 | Domain Autoconfig | 90 | `autoconfig.domain/mail/config-v1.1.xml` |
+| 6 | MX Heuristic | 75-80 | MX record + SPF parsing + TCP check |
+| 7 | Standard Hosts | 55-70 | `imap.domain`, `smtp.domain` + TCP check |
+
+**Score calculation:**
+- Servers found by multiple sources get +5 bonus per additional source
+- Reverse DNS mismatch on guessed hosts: -15 points
+- Maximum: 100 points
+
+## Response Format
+
+Each candidate contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `host` | string | Server hostname |
+| `port` | int | Port (993, 465, 587, ...) |
+| `ssl` | string | `ssl`, `starttls`, or `plain` |
+| `auth` | string\|null | Auth method (if known) |
+| `source` | string | Primary source |
+| `sources` | array | All sources that found this server |
+| `score` | int | Confidence score (0-100) |
+| `match_count` | int | Number of sources |
+
+## License
+
+MIT

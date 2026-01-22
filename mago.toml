@@ -1,0 +1,61 @@
+# Welcome to Mago!
+# For full documentation, see https://mago.carthage.software/tools/overview
+php-version = "8.5.0"
+
+[source]
+workspace = "."
+paths = ["src", "tests"]
+includes = ["vendor"]
+excludes = []
+
+[formatter]
+preset = "default"
+use-tabs = false
+tab-width = 2
+
+
+[linter]
+integrations = []
+
+[linter.rules]
+ambiguous-function-call = { enabled = false }
+literal-named-argument = { enabled = false }
+halstead = { enabled = false }
+no-error-control-operator = { enabled = false }
+no-else-clause = { enabled = false }
+prefer-early-continue = { enabled = false }
+cyclomatic-complexity = { enabled = false }
+kan-defect = { enabled = false }
+too-many-methods = { enabled = false }
+
+
+[analyzer]
+plugins = []
+find-unused-definitions = true
+find-unused-expressions = true
+analyze-dead-code = true
+memoize-properties = true
+allow-possibly-undefined-array-keys = false
+check-throws = true
+check-missing-override = true
+find-unused-parameters = true
+strict-list-index-checks = true
+no-boolean-literal-comparison = true
+check-missing-type-hints = true
+register-super-globals = true
+ignore = [
+  "no-error-control-operator",
+  "mixed-argument",
+  "mixed-array-access",
+  "mixed-operand",
+  "possibly-undefined-array-index",
+  "missing-parameter-type",
+  "mixed-assignment",
+  "mixed-property-access",
+  "missing-return-type",
+  "mixed-array-assignment",
+  "undefined-string-array-index",
+  "non-documented-property",
+  "invalid-iterator",
+  "string-member-selector"
+]
