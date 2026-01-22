@@ -24,11 +24,7 @@ jobs:
         run: composer install --no-interaction --prefer-dist
 
       - name: Install Mago
-        run: |
-          curl -sSL https://github.com/carthage-software/mago/releases/latest/download/mago-x86_64-unknown-linux-gnu.tar.gz -o mago.tar.gz
-          tar -xzf mago.tar.gz
-          chmod +x mago
-          sudo mv mago /usr/local/bin/
+        run: curl --proto '=https' --tlsv1.2 -sSf https://carthage.software/mago.sh | bash
 
       - name: Check formatting
         run: mago fmt --check
