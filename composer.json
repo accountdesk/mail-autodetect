@@ -4,6 +4,17 @@
   "type": "library",
   "license": "MIT",
   "version": "0.2.0",
+  "keywords": ["mail", "imap", "smtp", "autoconfig", "autodiscover", "email"],
+  "authors": [
+    {
+      "name": "accountdesk"
+    }
+  ],
+  "homepage": "https://github.com/accountdesk/mail-autodetect",
+  "support": {
+    "issues": "https://github.com/accountdesk/mail-autodetect/issues",
+    "source": "https://github.com/accountdesk/mail-autodetect"
+  },
   "autoload": {
     "psr-4": {
       "MailAutodetect\\": "src/"

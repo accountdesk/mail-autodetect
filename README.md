@@ -4,6 +4,7 @@
 [![Total Downloads](https://img.shields.io/packagist/dt/accountdesk/mail-autodetect)](https://packagist.org/packages/accountdesk/mail-autodetect)
 [![License](https://img.shields.io/packagist/l/accountdesk/mail-autodetect)](https://packagist.org/packages/accountdesk/mail-autodetect)
 [![PHP Version](https://img.shields.io/packagist/php-v/accountdesk/mail-autodetect)](https://packagist.org/packages/accountdesk/mail-autodetect)
+[![CI](https://github.com/accountdesk/mail-autodetect/actions/workflows/ci.yml/badge.svg)](https://github.com/accountdesk/mail-autodetect/actions/workflows/ci.yml)
 
 > *Mail server discovery on autopilot*
 
@@ -180,3 +181,7 @@ if ($imap) {
 ## License
 
 MIT
+
+## Testing
+
+This library uses static analysis (Mago) instead of unit tests. Network-dependent libraries like this are better validated through real-world usage than mocked tests.
