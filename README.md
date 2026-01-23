@@ -1,4 +1,4 @@
-# Mail-Autodetect
+# Mail-AutoDetect
 
 PHP library for automatic detection of IMAP and SMTP server settings for any domain.
 
