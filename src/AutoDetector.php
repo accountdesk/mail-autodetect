@@ -223,9 +223,14 @@ class AutoDetector
       'web.de' => ['imap.web.de', 993, 'smtp.web.de', 587],
       // IONOS / 1&1
       'ionos.com' => ['imap.ionos.de', 993, 'smtp.ionos.de', 587],
+      'mx00.ionos.de' => ['imap.ionos.de', 993, 'smtp.ionos.de', 587],
+      'mx01.ionos.de' => ['imap.ionos.de', 993, 'smtp.ionos.de', 587],
+      'mx00.udag.de' => ['imaps.udag.de', 993, 'smtps.udag.de', 587],
+      'mx01.udag.de' => ['imaps.udag.de', 993, 'smtps.udag.de', 587],
       'perfora.net' => ['imap.ionos.de', 993, 'smtp.ionos.de', 587],
       // Strato
       'strato.de' => ['imap.strato.de', 993, 'smtp.strato.de', 465],
+      'smtpin.rzone.de' => ['imap.strato.de', 993, 'smtp.strato.de', 465],
       // iCloud
       'icloud.com' => ['imap.mail.me.com', 993, 'smtp.mail.me.com', 587],
       // Zoho
