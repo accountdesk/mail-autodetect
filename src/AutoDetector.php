@@ -12,7 +12,7 @@ class AutoDetector
   /** @var object|null PSR-3 Logger */
   private ?object $logger = null;
 
-  /** @var array<string, mixed> In-Memory Cache */
+  /** @var array<string, mixed> In-memory cache */
   private array $cache = [];
 
   public function __construct(array $options = [])
@@ -29,7 +29,7 @@ class AutoDetector
   }
 
   /**
-   * PSR-3 kompatibles Logging
+   * PSR-3 compatible logging
    */
   private function log(string $level, string $message, array $context = []): void
   {
@@ -40,14 +40,14 @@ class AutoDetector
   }
 
   /**
-   * Hauptfunktion: Sammelt Kandidaten aus allen Quellen
-   * @param string $email_or_domain E-Mail-Adresse oder Domain
-   * @param int $threshold Score-Schwellwert - wenn IMAP+SMTP mit Score > threshold gefunden, abbrechen
+   * Main function: collects candidates from all sources
+   * @param string $email_or_domain Email address or domain
+   * @param int $threshold Score threshold - stop early when IMAP+SMTP with score > threshold found
    * @return array ['imap' => [[...], [...]], 'smtp' => [[...], [...]]]
    */
   public function autoDetect($email_or_domain, $threshold = 90)
   {
-    // E-Mail oder Domain?
+    // Email or domain?
     if (str_contains($email_or_domain, '@')) {
       $email = $email_or_domain;
       $domain = explode('@', $email, 2)[1];
@@ -56,7 +56,7 @@ class AutoDetector
       $domain = $email_or_domain;
     }
 
-    $this->log('info', 'AutoDetect gestartet', [
+    $this->log('info', 'AutoDetect started', [
       'domain' => $domain,
       'email' => $email,
       'threshold' => $threshold,
@@ -76,12 +76,12 @@ class AutoDetector
     ];
 
     foreach ($getters as $getter) {
-      // Autodiscover braucht E-Mail, sonst überspringen
+      // Autodiscover requires email, skip otherwise
       if ($getter === 'get_from_microsoft_autodiscover' && $email === null) {
         continue;
       }
 
-      $this->log('debug', "Strategie: {$getter}", ['domain' => $domain]);
+      $this->log('debug', "Strategy: {$getter}", ['domain' => $domain]);
 
       $result = $getter === 'get_from_microsoft_autodiscover' ? $this->$getter($email) : $this->$getter($domain);
 
@@ -89,7 +89,7 @@ class AutoDetector
       $smtp_count = count($result['smtp']);
 
       if ($imap_count > 0 || $smtp_count > 0) {
-        $this->log('debug', "Gefunden via {$getter}", [
+        $this->log('debug', "Found via {$getter}", [
           'imap' => $imap_count,
           'smtp' => $smtp_count,
         ]);
@@ -98,12 +98,12 @@ class AutoDetector
       $imap = array_merge($imap, $result['imap']);
       $smtp = array_merge($smtp, $result['smtp']);
 
-      // Prüfen ob guter Kandidat gefunden (beide mit Score > threshold)
+      // Check if good candidate found (both with score > threshold)
       $best_imap = $result['imap'] !== [] ? max(array_column($result['imap'], 'score')) : 0;
       $best_smtp = $result['smtp'] !== [] ? max(array_column($result['smtp'], 'score')) : 0;
 
       if ($best_imap > $threshold && $best_smtp > $threshold) {
-        $this->log('info', 'Threshold erreicht, breche ab', [
+        $this->log('info', 'Threshold reached, stopping early', [
           'getter' => $getter,
           'best_imap' => $best_imap,
           'best_smtp' => $best_smtp,
@@ -112,15 +112,15 @@ class AutoDetector
       }
     }
 
-    // Deduplizieren (gleiche host+port, höchster Score gewinnt)
+    // Deduplicate (same host+port, highest score wins)
     $imap = $this->deduplicate($imap);
     $smtp = $this->deduplicate($smtp);
 
-    // Nach Score sortieren (höchster zuerst)
+    // Sort by score (highest first)
     usort($imap, static fn($a, $b) => $b['score'] <=> $a['score']);
     usort($smtp, static fn($a, $b) => $b['score'] <=> $a['score']);
 
-    $this->log('info', 'AutoDetect abgeschlossen', [
+    $this->log('info', 'AutoDetect completed', [
       'domain' => $domain,
       'imap_count' => count($imap),
       'smtp_count' => count($smtp),
@@ -133,12 +133,12 @@ class AutoDetector
   }
 
   // ============================================================
-  // KANDIDATEN-GETTER (jeder liefert Array von Kandidaten mit Score)
+  // CANDIDATE GETTERS (each returns array of candidates with score)
   // ============================================================
 
   /**
-   * 1. Mozilla ISPDB - Thunderbird Autoconfig Datenbank
-   * Score: 95 (sehr zuverlässig für bekannte Provider)
+   * 1. Mozilla ISPDB - Thunderbird autoconfig database
+   * Score: 95 (very reliable for known providers)
    * @return array ['imap' => [...], 'smtp' => [...]]
    */
   private function get_from_mozilla_ispdb($domain)
@@ -159,7 +159,7 @@ class AutoDetector
       return $result;
     }
 
-    // IMAP Server parsen
+    // Parse IMAP servers
     if (isset($config->emailProvider->incomingServer)) {
       foreach ($config->emailProvider->incomingServer as $server) {
         if ((string) $server['type'] !== 'imap') {
@@ -176,7 +176,7 @@ class AutoDetector
       }
     }
 
-    // SMTP Server parsen
+    // Parse SMTP servers
     if (isset($config->emailProvider->outgoingServer)) {
       foreach ($config->emailProvider->outgoingServer as $server) {
         if ((string) $server['type'] !== 'smtp') {
@@ -197,96 +197,138 @@ class AutoDetector
   }
 
   /**
-   * 2. Known MX Patterns - Bekannte Provider anhand MX-Record erkennen
-   * Score: 92 (sehr zuverlässig, kein HTTP nötig)
+   * 2. Known MX Patterns - Detect known providers by MX record
+   * Score: 92 (very reliable, no HTTP needed)
    * @return array ['imap' => [...], 'smtp' => [...]]
    */
   private function get_from_known_mx($domain)
   {
-    $result = ['imap' => [], 'smtp' => []];
     $source = 'known_mx';
-    $score = 92;
 
-    // Bekannte Provider: MX-Pattern => [imap_host, imap_port, smtp_host, smtp_port]
+    // Known providers: MX pattern => direct output format
     $known_providers = [
       // Google / Gmail
-      'google.com' => ['imap.gmail.com', 993, 'smtp.gmail.com', 465],
-      'googlemail.com' => ['imap.gmail.com', 993, 'smtp.gmail.com', 465],
+      'google.com' => [
+        'imap' => ['host' => 'imap.gmail.com', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'OAuth2'],
+        'smtp' => ['host' => 'smtp.gmail.com', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'OAuth2'],
+      ],
+      'googlemail.com' => [
+        'imap' => ['host' => 'imap.gmail.com', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'OAuth2'],
+        'smtp' => ['host' => 'smtp.gmail.com', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'OAuth2'],
+      ],
       // Microsoft / Outlook / Office 365
-      'outlook.com' => ['outlook.office365.com', 993, 'smtp.office365.com', 587],
-      'protection.outlook.com' => ['outlook.office365.com', 993, 'smtp.office365.com', 587],
+      'outlook.com' => [
+        'imap' => ['host' => 'outlook.office365.com', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'OAuth2'],
+        'smtp' => ['host' => 'smtp.office365.com', 'port' => 587, 'ssl' => 'starttls', 'auth' => 'OAuth2'],
+      ],
+      'protection.outlook.com' => [
+        'imap' => ['host' => 'outlook.office365.com', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'OAuth2'],
+        'smtp' => ['host' => 'smtp.office365.com', 'port' => 587, 'ssl' => 'starttls', 'auth' => 'OAuth2'],
+      ],
       // Yahoo
-      'yahoodns.net' => ['imap.mail.yahoo.com', 993, 'smtp.mail.yahoo.com', 465],
+      'yahoodns.net' => [
+        'imap' => ['host' => 'imap.mail.yahoo.com', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.mail.yahoo.com', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+      ],
       // GMX
-      'gmx.net' => ['imap.gmx.net', 993, 'mail.gmx.net', 587],
+      'gmx.net' => [
+        'imap' => ['host' => 'imap.gmx.net', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'mail.gmx.net', 'port' => 587, 'ssl' => 'starttls', 'auth' => 'password-cleartext'],
+      ],
       // Web.de
-      'web.de' => ['imap.web.de', 993, 'smtp.web.de', 587],
+      'web.de' => [
+        'imap' => ['host' => 'imap.web.de', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.web.de', 'port' => 587, 'ssl' => 'starttls', 'auth' => 'password-cleartext'],
+      ],
       // IONOS / 1&1
-      'ionos.com' => ['imap.ionos.de', 993, 'smtp.ionos.de', 587],
-      'mx00.ionos.de' => ['imap.ionos.de', 993, 'smtp.ionos.de', 587],
-      'mx01.ionos.de' => ['imap.ionos.de', 993, 'smtp.ionos.de', 587],
-      'mx00.udag.de' => ['imaps.udag.de', 993, 'smtps.udag.de', 587],
-      'mx01.udag.de' => ['imaps.udag.de', 993, 'smtps.udag.de', 587],
-      'perfora.net' => ['imap.ionos.de', 993, 'smtp.ionos.de', 587],
+      'ionos.com' => [
+        'imap' => ['host' => 'imap.ionos.de', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.ionos.de', 'port' => 587, 'ssl' => 'starttls', 'auth' => 'password-cleartext'],
+      ],
+      'mx00.ionos.de' => [
+        'imap' => ['host' => 'imap.ionos.de', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.ionos.de', 'port' => 587, 'ssl' => 'starttls', 'auth' => 'password-cleartext'],
+      ],
+      'mx01.ionos.de' => [
+        'imap' => ['host' => 'imap.ionos.de', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.ionos.de', 'port' => 587, 'ssl' => 'starttls', 'auth' => 'password-cleartext'],
+      ],
+      'mx00.udag.de' => [
+        'imap' => ['host' => 'imaps.udag.de', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtps.udag.de', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+      ],
+      'mx01.udag.de' => [
+        'imap' => ['host' => 'imaps.udag.de', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtps.udag.de', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+      ],
+      'perfora.net' => [
+        'imap' => ['host' => 'imap.ionos.de', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.ionos.de', 'port' => 587, 'ssl' => 'starttls', 'auth' => 'password-cleartext'],
+      ],
       // Strato
-      'strato.de' => ['imap.strato.de', 993, 'smtp.strato.de', 465],
-      'smtpin.rzone.de' => ['imap.strato.de', 993, 'smtp.strato.de', 465],
+      'strato.de' => [
+        'imap' => ['host' => 'imap.strato.de', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.strato.de', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+      ],
+      'smtpin.rzone.de' => [
+        'imap' => ['host' => 'imap.strato.de', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.strato.de', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+      ],
       // iCloud
-      'icloud.com' => ['imap.mail.me.com', 993, 'smtp.mail.me.com', 587],
+      'icloud.com' => [
+        'imap' => ['host' => 'imap.mail.me.com', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.mail.me.com', 'port' => 587, 'ssl' => 'starttls', 'auth' => 'password-cleartext'],
+      ],
       // Zoho
-      'zoho.com' => ['imap.zoho.com', 993, 'smtp.zoho.com', 465],
-      // ProtonMail (Bridge nötig)
-      'protonmail.ch' => ['127.0.0.1', 1143, '127.0.0.1', 1025],
+      'zoho.com' => [
+        'imap' => ['host' => 'imap.zoho.com', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.zoho.com', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+      ],
+      // ProtonMail (requires Bridge)
+      'protonmail.ch' => [
+        'imap' => ['host' => '127.0.0.1', 'port' => 1143, 'ssl' => 'starttls', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => '127.0.0.1', 'port' => 1025, 'ssl' => 'starttls', 'auth' => 'password-cleartext'],
+      ],
       // Fastmail
-      'fastmail.com' => ['imap.fastmail.com', 993, 'smtp.fastmail.com', 465],
+      'fastmail.com' => [
+        'imap' => ['host' => 'imap.fastmail.com', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.fastmail.com', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+      ],
       // mailbox.org
-      'mailbox.org' => ['imap.mailbox.org', 993, 'smtp.mailbox.org', 465],
+      'mailbox.org' => [
+        'imap' => ['host' => 'imap.mailbox.org', 'port' => 993, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+        'smtp' => ['host' => 'smtp.mailbox.org', 'port' => 465, 'ssl' => 'ssl', 'auth' => 'password-cleartext'],
+      ],
     ];
 
     $mx_records = $this->get_dns($domain, 'MX');
     if (!$mx_records) {
-      return $result;
+      return ['imap' => [], 'smtp' => []];
     }
 
-    // MX-Host holen (niedrigste Priorität)
+    // Get MX host (lowest priority)
     usort($mx_records, static fn($a, $b) => $a['pri'] <=> $b['pri']);
     $mx_host = strtolower(rtrim($mx_records[0]['target'], '.'));
 
-    // Bekannte Provider matchen
+    // Match known providers
     foreach ($known_providers as $pattern => $config) {
       if (str_contains($mx_host, $pattern)) {
-        [$imap_host, $imap_port, $smtp_host, $smtp_port] = $config;
-
-        $result['imap'][] = [
-          'host' => $imap_host,
-          'port' => $imap_port,
-          'ssl' => 'ssl',
-          'auth' => null,
-          'source' => $source,
-          'score' => $score,
-        ];
-
-        $result['smtp'][] = [
-          'host' => $smtp_host,
-          'port' => $smtp_port,
-          'ssl' => $smtp_port === 465 ? 'ssl' : 'starttls',
-          'auth' => null,
-          'source' => $source,
-          'score' => $score,
-        ];
-
         $this->log('debug', 'Known MX match', ['mx' => $mx_host, 'pattern' => $pattern]);
-        break;
+
+        return [
+          'imap' => [array_merge($config['imap'], ['source' => $source, 'score' => 92])],
+          'smtp' => [array_merge($config['smtp'], ['source' => $source, 'score' => 92])],
+        ];
       }
     }
 
-    return $result;
+    return ['imap' => [], 'smtp' => []];
   }
 
   /**
    * 3. Microsoft Autodiscover (Exchange/Office 365)
-   * Score: 92 (sehr zuverlässig für Exchange)
-   * @param string $email Die E-Mail-Adresse
+   * Score: 92 (very reliable for Exchange)
+   * @param string $email The email address
    * @return array ['imap' => [...], 'smtp' => [...]]
    */
   private function get_from_microsoft_autodiscover($email)
@@ -297,20 +339,20 @@ class AutoDetector
 
     $domain = explode('@', $email, 2)[1];
 
-    // Autodiscover URLs probieren
+    // Try autodiscover URLs
     $urls = [
       "https://autodiscover.{$domain}/autodiscover/autodiscover.xml",
       "https://{$domain}/autodiscover/autodiscover.xml",
     ];
 
-    // DNS SRV Record als Fallback
+    // DNS SRV record as fallback
     $srv = $this->get_dns("_autodiscover._tcp.{$domain}", 'SRV');
     if ($srv) {
       $autodiscover_host = rtrim($srv[0]['target'], '.');
       $urls[] = "https://{$autodiscover_host}/autodiscover/autodiscover.xml";
     }
 
-    // Autodiscover Request XML
+    // Autodiscover request XML
     $request_xml = '<?xml version="1.0" encoding="utf-8"?>
 <Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/requestschema/2006">
   <Request>
@@ -331,13 +373,13 @@ class AutoDetector
         continue;
       }
 
-      // Namespace registrieren für XPath
+      // Register namespace for XPath
       $config->registerXPathNamespace(
         'a',
         'http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a',
       );
 
-      // Protocol-Einträge suchen
+      // Search for protocol entries
       $protocols = $config->xpath('//a:Protocol');
       if (!is_array($protocols) || $protocols === []) {
         $protocols = $config->xpath('//Protocol');
@@ -377,7 +419,7 @@ class AutoDetector
         }
       }
 
-      // Wenn gefunden, nicht weitere URLs probieren
+      // If found, don't try more URLs
       if ($result['imap'] !== [] || $result['smtp'] !== []) {
         break;
       }
@@ -387,8 +429,8 @@ class AutoDetector
   }
 
   /**
-   * 3. DNS SRV Records (RFC 6186)
-   * Score: 90 (offizieller Standard, aber selten genutzt)
+   * 4. DNS SRV Records (RFC 6186)
+   * Score: 90 (official standard, but rarely used)
    * @return array ['imap' => [...], 'smtp' => [...]]
    */
   private function get_from_dns_srv($domain)
@@ -453,8 +495,8 @@ class AutoDetector
   }
 
   /**
-   * 3. Autoconfig auf der Domain selbst
-   * Score: 90 (vom Domain-Besitzer konfiguriert)
+   * 5. Autoconfig on the domain itself
+   * Score: 90 (configured by domain owner)
    * @return array ['imap' => [...], 'smtp' => [...]]
    */
   private function get_from_domain_autoconfig($domain)
@@ -481,7 +523,7 @@ class AutoDetector
         continue;
       }
 
-      // IMAP Server parsen
+      // Parse IMAP servers
       if (isset($config->emailProvider->incomingServer)) {
         foreach ($config->emailProvider->incomingServer as $server) {
           if ((string) $server['type'] !== 'imap') {
@@ -498,7 +540,7 @@ class AutoDetector
         }
       }
 
-      // SMTP Server parsen
+      // Parse SMTP servers
       if (isset($config->emailProvider->outgoingServer)) {
         foreach ($config->emailProvider->outgoingServer as $server) {
           if ((string) $server['type'] !== 'smtp') {
@@ -515,7 +557,7 @@ class AutoDetector
         }
       }
 
-      // Wenn gefunden, nicht weitere URLs probieren
+      // If found, don't try more URLs
       if ($result['imap'] !== [] || $result['smtp'] !== []) {
         break;
       }
@@ -525,8 +567,8 @@ class AutoDetector
   }
 
   /**
-   * 4. MX-Record Heuristik (bekannte Provider erkennen)
-   * Score: 80 (Heuristik basierend auf MX)
+   * 6. MX record heuristic
+   * Score: 80 (heuristic based on MX)
    * @return array ['imap' => [...], 'smtp' => [...]]
    */
   private function get_from_mx_heuristic($domain)
@@ -534,67 +576,81 @@ class AutoDetector
     $result = ['imap' => [], 'smtp' => []];
     $source = 'mx_heuristic';
 
-    // MX-Record auslesen für IMAP und SMTP
+    // Collect all checks to run in parallel
+    $checks = [];
+    /** @var array<string, array{type: string, ssl_type: string, source: string, score: int}> */
+    $check_meta = [];
+
+    // Get MX record
     $mx_records = $this->get_dns($domain, 'MX');
+    $mx_host = null;
+
     if ($mx_records) {
       usort($mx_records, static fn($a, $b) => $a['pri'] <=> $b['pri']);
       $mx_host = rtrim($mx_records[0]['target'], '.');
 
-      // IMAP auf MX-Host prüfen
+      // Add MX host checks for IMAP
       foreach ([
         [993, true,  'ssl'],
         [143, false, 'starttls'],
       ] as [$port, $ssl, $type]) {
-        $info = $this->get_tcp_info($mx_host, $port, $ssl);
-        if ($info['success'] && $info['service'] === 'imap') {
-          $result['imap'][] = [
-            'host' => $mx_host,
-            'port' => $port,
-            'ssl' => $type,
-            'auth' => null,
-            'source' => $source,
-            'score' => 80,
-          ];
-        }
+        $key = "{$mx_host}:{$port}";
+        $checks[] = ['host' => $mx_host, 'port' => $port, 'ssl' => $ssl];
+        $check_meta[$key] = ['type' => 'imap', 'ssl_type' => $type, 'source' => $source, 'score' => 80];
       }
 
-      // SMTP auf MX-Host prüfen
+      // Add MX host checks for SMTP
       foreach ([
         [465, true,  'ssl'],
         [587, false, 'starttls'],
       ] as [$port, $ssl, $type]) {
-        $info = $this->get_tcp_info($mx_host, $port, $ssl);
-        if ($info['success'] && $info['service'] === 'smtp') {
-          $result['smtp'][] = [
-            'host' => $mx_host,
-            'port' => $port,
-            'ssl' => $type,
-            'auth' => null,
-            'source' => $source,
-            'score' => 80,
-          ];
-        }
+        $key = "{$mx_host}:{$port}";
+        $checks[] = ['host' => $mx_host, 'port' => $port, 'ssl' => $ssl];
+        $check_meta[$key] = ['type' => 'smtp', 'ssl_type' => $type, 'source' => $source, 'score' => 80];
       }
     }
 
-    // SPF-Record für zusätzliche SMTP-Hosts
+    // Add SPF hosts checks for SMTP
     $spf_hosts = $this->extract_spf_hosts($domain);
     foreach ($spf_hosts as $spf_host) {
       foreach ([
         [465, true,  'ssl'],
         [587, false, 'starttls'],
       ] as [$port, $ssl, $type]) {
-        $info = $this->get_tcp_info($spf_host, $port, $ssl);
-        if ($info['success'] && $info['service'] === 'smtp') {
-          $result['smtp'][] = [
-            'host' => $spf_host,
-            'port' => $port,
-            'ssl' => $type,
-            'auth' => null,
-            'source' => $source . '_spf',
-            'score' => 75,
-          ];
+        $key = "{$spf_host}:{$port}";
+        if (!isset($check_meta[$key])) { // Avoid duplicates
+          $checks[] = ['host' => $spf_host, 'port' => $port, 'ssl' => $ssl];
+          $check_meta[$key] = ['type' => 'smtp', 'ssl_type' => $type, 'source' => $source . '_spf', 'score' => 75];
         }
+      }
+    }
+
+    if ($checks === []) {
+      return $result;
+    }
+
+    // Run all checks in parallel
+    $tcp_results = $this->get_tcp_info_batch($checks);
+
+    // Process results
+    foreach ($tcp_results as $key => $info) {
+      $key = (string) $key;
+      if (!$info['success'] || !isset($check_meta[$key])) {
+        continue;
+      }
+
+      $meta = $check_meta[$key];
+      $expected_service = $meta['type'];
+
+      if ($info['service'] === $expected_service) {
+        $result[$expected_service][] = [
+          'host' => $info['host'],
+          'port' => $info['port'],
+          'ssl' => $meta['ssl_type'],
+          'auth' => null,
+          'source' => $meta['source'],
+          'score' => $meta['score'],
+        ];
       }
     }
 
@@ -602,7 +658,7 @@ class AutoDetector
   }
 
   /**
-   * Extrahiert Hostnamen aus SPF-Record (rekursiv)
+   * Extracts hostnames from SPF record (recursive)
    */
   private function extract_spf_hosts($domain, $depth = 0)
   {
@@ -623,12 +679,12 @@ class AutoDetector
         continue;
       }
 
-      // "a" mechanism → Domain selbst
+      // "a" mechanism -> domain itself
       if (preg_match('/\ba\b/', $txt)) {
         $hosts[] = $domain;
       }
 
-      // "mx" mechanism → MX-Hosts der Domain
+      // "mx" mechanism -> MX hosts of the domain
       if (preg_match('/\bmx\b/', $txt)) {
         $mx_records = $this->get_dns($domain, 'MX');
         if ($mx_records) {
@@ -656,7 +712,7 @@ class AutoDetector
         }
       }
 
-      // "include:domain" → rekursiv auflösen
+      // "include:domain" -> resolve recursively
       if (preg_match_all('/include:([^\s]+)/', $txt, $matches)) {
         foreach ($matches[1] as $inc_domain) {
           $hosts = array_merge($hosts, $this->extract_spf_hosts($inc_domain, $depth + 1));
@@ -668,8 +724,8 @@ class AutoDetector
   }
 
   /**
-   * 5. Standard-Hostnamen raten + TCP-Check
-   * Score: 50-70 (geraten, aber verifiziert)
+   * 7. Standard hostnames guessing + TCP check
+   * Score: 50-70 (guessed but verified)
    * @return array ['imap' => [...], 'smtp' => [...]]
    */
   private function get_from_standard_hosts($domain)
@@ -700,47 +756,61 @@ class AutoDetector
       ['port' => 25, 'ssl' => false, 'type' => 'plain'],
     ];
 
-    // IMAP finden
+    // Collect all checks to run in parallel
+    $checks = [];
+    /** @var array<string, array{type: string, ssl_type: string}> */
+    $check_meta = [];
+
+    // Add IMAP checks
     foreach ($imap_hosts as $host) {
       foreach ($imap_ports as $port_config) {
-        $info = $this->get_tcp_info($host, $port_config['port'], $port_config['ssl']);
-        if ($info['success'] && $info['service'] === 'imap') {
-          $score = 70;
-          // Reverse DNS prüfen
-          if (!$this->reverse_dns_matches($host, $domain)) {
-            $score -= 15;
-          }
-          $result['imap'][] = [
-            'host' => $host,
-            'port' => $port_config['port'],
-            'ssl' => $port_config['type'],
-            'auth' => null,
-            'source' => $source,
-            'score' => $score,
-          ];
+        $key = "{$host}:{$port_config['port']}";
+        if (!isset($check_meta[$key])) {
+          $checks[] = ['host' => $host, 'port' => $port_config['port'], 'ssl' => $port_config['ssl']];
+          $check_meta[$key] = ['type' => 'imap', 'ssl_type' => $port_config['type']];
         }
       }
     }
 
-    // SMTP finden
+    // Add SMTP checks
     foreach ($smtp_hosts as $host) {
       foreach ($smtp_ports as $port_config) {
-        $info = $this->get_tcp_info($host, $port_config['port'], $port_config['ssl']);
-        if ($info['success'] && $info['service'] === 'smtp') {
-          $score = 70;
-          // Reverse DNS prüfen
-          if (!$this->reverse_dns_matches($host, $domain)) {
-            $score -= 15;
-          }
-          $result['smtp'][] = [
-            'host' => $host,
-            'port' => $port_config['port'],
-            'ssl' => $port_config['type'],
-            'auth' => null,
-            'source' => $source,
-            'score' => $score,
-          ];
+        $key = "{$host}:{$port_config['port']}";
+        if (!isset($check_meta[$key])) {
+          $checks[] = ['host' => $host, 'port' => $port_config['port'], 'ssl' => $port_config['ssl']];
+          $check_meta[$key] = ['type' => 'smtp', 'ssl_type' => $port_config['type']];
         }
+      }
+    }
+
+    // Run all checks in parallel
+    $tcp_results = $this->get_tcp_info_batch($checks);
+
+    // Process results
+    foreach ($tcp_results as $key => $info) {
+      $key = (string) $key;
+      if (!$info['success'] || !isset($check_meta[$key])) {
+        continue;
+      }
+
+      $meta = $check_meta[$key];
+      $expected_service = $meta['type'];
+
+      if ($info['service'] === $expected_service) {
+        $score = 70;
+        // Check reverse DNS (only for successful connections)
+        if (!$this->reverse_dns_matches($info['host'], $domain)) {
+          $score -= 15;
+        }
+
+        $result[$expected_service][] = [
+          'host' => $info['host'],
+          'port' => $info['port'],
+          'ssl' => $meta['ssl_type'],
+          'auth' => null,
+          'source' => $source,
+          'score' => $score,
+        ];
       }
     }
 
@@ -748,11 +818,11 @@ class AutoDetector
   }
 
   // ============================================================
-  // HILFSFUNKTIONEN
+  // HELPER FUNCTIONS
   // ============================================================
 
   /**
-   * Cache-Zugriff
+   * Cache access
    */
   private function cache_get(string $key): mixed
   {
@@ -770,7 +840,7 @@ class AutoDetector
   }
 
   /**
-   * HTTP GET Request mit cURL (cached)
+   * HTTP GET request with cURL (cached)
    */
   private function http_get($url)
   {
@@ -784,7 +854,7 @@ class AutoDetector
 
     $ch = curl_init();
     if ($ch === false) {
-      $this->log('warning', 'curl_init fehlgeschlagen');
+      $this->log('warning', 'curl_init failed');
       return false;
     }
     curl_setopt_array($ch, [
@@ -801,7 +871,7 @@ class AutoDetector
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
     if ($response === false || $httpCode >= 400) {
-      $this->log('debug', 'HTTP Fehler', ['url' => $url, 'code' => $httpCode]);
+      $this->log('debug', 'HTTP error', ['url' => $url, 'code' => $httpCode]);
       $this->cache_set($cache_key, false);
       return false;
     }
@@ -811,7 +881,7 @@ class AutoDetector
   }
 
   /**
-   * HTTP POST Request mit cURL (cached)
+   * HTTP POST request with cURL (cached)
    */
   private function http_post($url, $body, $content_type = 'application/x-www-form-urlencoded')
   {
@@ -825,7 +895,7 @@ class AutoDetector
 
     $ch = curl_init();
     if ($ch === false) {
-      $this->log('warning', 'curl_init fehlgeschlagen');
+      $this->log('warning', 'curl_init failed');
       return false;
     }
     curl_setopt_array($ch, [
@@ -848,7 +918,7 @@ class AutoDetector
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
     if ($response === false || $httpCode >= 400) {
-      $this->log('debug', 'HTTP POST Fehler', ['url' => $url, 'code' => $httpCode]);
+      $this->log('debug', 'HTTP POST error', ['url' => $url, 'code' => $httpCode]);
       $this->cache_set($cache_key, false);
       return false;
     }
@@ -858,8 +928,8 @@ class AutoDetector
   }
 
   /**
-   * Dedupliziert Kandidaten nach host+port, kombiniert Scores
-   * Mehrfach gefundene Einträge bekommen Bonus
+   * Deduplicates candidates by host+port, combines scores
+   * Entries found multiple times get a bonus
    */
   private function deduplicate(array $candidates): array
   {
@@ -875,14 +945,14 @@ class AutoDetector
         continue;
       }
 
-      // Mehrfach gefunden - Score kombinieren
+      // Found multiple times - combine scores
       $existing = $unique[$key];
       $existing['sources'][] = $c['source'];
       $existing['match_count'] = (int) $existing['match_count'] + 1;
 
-      // Höchsten Basis-Score nehmen + Bonus für Mehrfachtreffer
+      // Take highest base score + bonus for multiple matches
       $base_score = max($existing['score'], $c['score']);
-      $bonus = ($existing['match_count'] - 1) * 5; // +5 pro zusätzlicher Quelle
+      $bonus = ($existing['match_count'] - 1) * 5; // +5 per additional source
       $existing['score'] = min(100, $base_score + $bonus); // Max 100
 
       $unique[$key] = $existing;
@@ -892,7 +962,7 @@ class AutoDetector
   }
 
   /**
-   * Parst socketType aus Autoconfig XML
+   * Parses socketType from autoconfig XML
    */
   private function parse_socket_type($type)
   {
@@ -907,10 +977,10 @@ class AutoDetector
   }
 
   /**
-   * Liest einen spezifischen DNS-Eintrag aus (cached)
-   * @param string $domain Die Domain
-   * @param string $type Der DNS-Record-Typ (A, AAAA, MX, TXT, CNAME, NS, SOA, SRV, etc.)
-   * @return array|false Array mit DNS-Einträgen oder false bei Fehler
+   * Reads a specific DNS record (cached)
+   * @param string $domain The domain
+   * @param string $type The DNS record type (A, AAAA, MX, TXT, CNAME, NS, SOA, SRV, etc.)
+   * @return array|false Array with DNS records or false on error
    */
   private function get_dns($domain, $type = 'A')
   {
@@ -940,7 +1010,7 @@ class AutoDetector
       return false;
     }
 
-    $this->log('debug', 'DNS Lookup', ['domain' => $domain, 'type' => $type]);
+    $this->log('debug', 'DNS lookup', ['domain' => $domain, 'type' => $type]);
 
     $records = @dns_get_record($domain, $type_map[$type]);
 
@@ -954,25 +1024,25 @@ class AutoDetector
   }
 
   /**
-   * Reverse DNS Lookup - gibt den Hostnamen für eine IP zurück
-   * @param string $domain_or_ip Domain oder IP-Adresse
-   * @return string|false Hostname oder false bei Fehler
+   * Reverse DNS lookup - returns hostname for an IP
+   * @param string $domain_or_ip Domain or IP address
+   * @return string|false Hostname or false on error
    */
   private function get_reverse_dns($domain_or_ip)
   {
-    // Prüfen ob es eine IP ist
+    // Check if it's an IP
     $ip = $domain_or_ip;
     if (!filter_var($domain_or_ip, FILTER_VALIDATE_IP)) {
-      // Domain → erst IP auflösen
+      // Domain -> resolve IP first
       $ip = @gethostbyname($domain_or_ip);
       if ($ip === $domain_or_ip) {
-        return false; // Konnte nicht aufgelöst werden
+        return false; // Could not resolve
       }
     }
 
     $hostname = @gethostbyaddr($ip);
 
-    // gethostbyaddr gibt die IP zurück wenn kein PTR existiert
+    // gethostbyaddr returns the IP if no PTR exists
     if ($hostname === $ip) {
       return false;
     }
@@ -981,10 +1051,10 @@ class AutoDetector
   }
 
   /**
-   * Prüft ob Reverse DNS des Hosts zur Domain passt
-   * @param string $host Der Host
-   * @param string $domain Die erwartete Domain
-   * @return bool True wenn Reverse DNS zur Domain passt
+   * Checks if reverse DNS of host matches the domain
+   * @param string $host The host
+   * @param string $domain The expected domain
+   * @return bool True if reverse DNS matches the domain
    */
   private function reverse_dns_matches($host, $domain)
   {
@@ -994,12 +1064,12 @@ class AutoDetector
       return false;
     }
 
-    // Prüfen ob Domain im Reverse DNS enthalten ist
-    // z.B. "mail.example.com" enthält "example.com"
+    // Check if domain is contained in reverse DNS
+    // e.g. "mail.example.com" contains "example.com"
     $reverse = strtolower($reverse);
     $domain = strtolower($domain);
 
-    // Exakter Match oder endet mit .domain
+    // Exact match or ends with .domain
     if ($reverse === $domain || str_ends_with($reverse, ".{$domain}")) {
       return true;
     }
@@ -1008,11 +1078,148 @@ class AutoDetector
   }
 
   /**
-   * Öffnet eine TCP-Verbindung und liest das Server-Banner
-   * @param string $domain_or_ip Domain oder IP-Adresse
-   * @param int $port Der Port (z.B. 22=SSH, 25=SMTP, 143=IMAP, 993=IMAPS, 465=SMTPS, 587=Submission)
-   * @param bool $use_ssl SSL verwenden
-   * @return array Informationen über den Dienst
+   * Batch TCP check - tests multiple host/port combinations in parallel
+   * @param array $checks Array of ['host' => ..., 'port' => ..., 'ssl' => bool]
+   * @return array Results indexed by "host:port"
+   */
+  private function get_tcp_info_batch(array $checks): array
+  {
+    $results = [];
+    $sockets = [];
+    $socket_meta = [];
+
+    // Initialize results and prepare connections
+    foreach ($checks as $check) {
+      $host = $check['host'];
+      $port = $check['port'];
+      $use_ssl = $check['ssl'] ?? false;
+      $key = "{$host}:{$port}";
+
+      $results[$key] = [
+        'host' => $host,
+        'port' => $port,
+        'success' => false,
+        'banner' => null,
+        'service' => 'unknown',
+        'ssl' => $use_ssl,
+        'error' => null,
+      ];
+
+      // Resolve hostname first to avoid DNS blocking
+      $ip = @gethostbyname($host);
+      if ($ip === $host && !filter_var($host, FILTER_VALIDATE_IP)) {
+        $results[$key]['error'] = 'DNS resolution failed';
+        continue;
+      }
+
+      $address = $use_ssl ? "ssl://{$ip}" : "tcp://{$ip}";
+
+      $context = stream_context_create([
+        'ssl' => [
+          'verify_peer' => false,
+          'verify_peer_name' => false,
+          'allow_self_signed' => true,
+        ],
+      ]);
+
+      $errno = null;
+      $errstr = null;
+
+      // Non-blocking connect
+      $socket = @stream_socket_client(
+        "{$address}:{$port}",
+        $errno,
+        $errstr,
+        0, // 0 timeout for non-blocking
+        STREAM_CLIENT_CONNECT | STREAM_CLIENT_ASYNC_CONNECT,
+        $context,
+      );
+
+      if ($socket === false) {
+        $results[$key]['error'] = "{$errno}: {$errstr}";
+        continue;
+      }
+
+      stream_set_blocking($socket, false);
+      $sockets[$key] = $socket;
+      $socket_meta[$key] = ['connected' => false];
+    }
+
+    if ($sockets === []) {
+      return $results;
+    }
+
+    // Wait for connections with stream_select
+    $timeout_sec = $this->timeout_tcp;
+    $start_time = microtime(true);
+
+    while ($sockets !== [] && (microtime(true) - $start_time) < $timeout_sec) {
+      $read = $sockets;
+      $write = $sockets;
+      $except = null;
+
+      $remaining = $timeout_sec - (microtime(true) - $start_time);
+      if ($remaining <= 0) {
+        break;
+      }
+
+      $select_result = @stream_select(
+        $read,
+        $write,
+        $except,
+        (int) $remaining,
+        (int) (($remaining - (int) $remaining) * 1000000),
+      );
+
+      if ($select_result === false) {
+        break;
+      }
+
+      // Check writable sockets (connection established or failed)
+      foreach ($write as $socket) {
+        $key = array_search($socket, $sockets, true);
+        if ($key === false) {
+          continue;
+        }
+
+        // Mark as connected and try to read banner
+        if (!$socket_meta[$key]['connected']) {
+          $socket_meta[$key]['connected'] = true;
+
+          // Connection successful - try to read banner
+          stream_set_blocking($socket, true);
+          stream_set_timeout($socket, 1); // Short timeout for banner read
+
+          $banner = @fread($socket, 4096);
+
+          $results[$key]['success'] = true;
+
+          if ($banner !== false && strlen($banner) > 0) {
+            $results[$key]['banner'] = trim($banner);
+            $results[$key]['service'] = $this->detect_service($banner, $results[$key]['port']);
+          }
+
+          fclose($socket);
+          unset($sockets[$key]);
+        }
+      }
+    }
+
+    // Close remaining sockets (timed out)
+    foreach ($sockets as $key => $socket) {
+      $results[$key]['error'] = 'Connection timed out';
+      @fclose($socket);
+    }
+
+    return $results;
+  }
+
+  /**
+   * Opens a TCP connection and reads the server banner
+   * @param string $domain_or_ip Domain or IP address
+   * @param int $port The port (e.g. 22=SSH, 25=SMTP, 143=IMAP, 993=IMAPS, 465=SMTPS, 587=Submission)
+   * @param bool $use_ssl Use SSL
+   * @return array Information about the service
    */
   private function get_tcp_info($domain_or_ip, $port, $use_ssl = false)
   {
@@ -1057,7 +1264,7 @@ class AutoDetector
 
     stream_set_timeout($socket, $this->timeout_tcp);
 
-    // Banner lesen (viele Dienste senden direkt nach Connect)
+    // Read banner (many services send it immediately after connect)
     $banner = @fread($socket, 4096);
 
     if ($banner !== false && strlen($banner) > 0) {
@@ -1071,7 +1278,7 @@ class AutoDetector
   }
 
   /**
-   * Erkennt den Dienst anhand des Banners
+   * Detects the service based on the banner
    */
   private function detect_service($banner, $port)
   {
