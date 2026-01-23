@@ -1,5 +1,12 @@
 # Mail-AutoDetect
 
+[![Latest Version](https://img.shields.io/packagist/v/accountdesk/mail-autodetect)](https://packagist.org/packages/accountdesk/mail-autodetect)
+[![Total Downloads](https://img.shields.io/packagist/dt/accountdesk/mail-autodetect)](https://packagist.org/packages/accountdesk/mail-autodetect)
+[![License](https://img.shields.io/packagist/l/accountdesk/mail-autodetect)](https://packagist.org/packages/accountdesk/mail-autodetect)
+[![PHP Version](https://img.shields.io/packagist/php-v/accountdesk/mail-autodetect)](https://packagist.org/packages/accountdesk/mail-autodetect)
+
+> *Mail server discovery on autopilot*
+
 PHP library for automatic detection of IMAP and SMTP server settings for any domain.
 
 ## Installation
@@ -140,6 +147,35 @@ Each candidate contains:
 | `sources` | array | All sources that found this server |
 | `score` | int | Confidence score (0-100) |
 | `match_count` | int | Number of sources |
+
+## Security Considerations
+
+> **Important:** This library detects mail server configurations but does NOT validate them.
+
+Before using detected settings with real credentials:
+
+1. **Always confirm with the user** - Show the detected hostname/port and ask for explicit confirmation
+2. **Don't auto-connect** - Never automatically test connections with real passwords
+3. **Validate the domain** - Ensure the detected hosts belong to the expected domain
+
+Example secure implementation:
+
+```php
+$result = $detector->autoDetect($email);
+$imap = $result['imap'][0] ?? null;
+
+if ($imap) {
+    // Show user the detected settings and ask for confirmation
+    echo "Detected IMAP server: {$imap['host']}:{$imap['port']}\n";
+    echo "Is this correct? (y/n): ";
+
+    if (readline() !== 'y') {
+        // Let user enter settings manually
+    }
+}
+```
+
+**Why this matters:** A malicious domain could configure autoconfig/autodiscover to point to an attacker-controlled server, potentially capturing credentials.
 
 ## License
 
