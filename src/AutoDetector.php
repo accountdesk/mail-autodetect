@@ -1,5 +1,13 @@
 <?php
 
+/**
+ * This file is part of accountdesk/mail-autodetect.
+ *
+ * @license MIT
+ * @copyright 2026 accountdesk
+ * @see https://github.com/accountdesk/mail-autodetect
+ */
+
 declare(strict_types=1);
 
 namespace MailAutodetect;
@@ -607,24 +615,20 @@ class AutoDetector
         $mx_host = rtrim($mx['target'], '.');
 
         // Add MX host checks for IMAP
-        foreach (
-          [
-            [993, true,  'ssl'],
-            [143, false, 'starttls'],
-          ] as [$port, $ssl, $type]
-        ) {
+        foreach ([
+          [993, true,  'ssl'],
+          [143, false, 'starttls'],
+        ] as [$port, $ssl, $type]) {
           $key = "{$mx_host}:{$port}";
           $checks[] = ['host' => $mx_host, 'port' => $port, 'ssl' => $ssl];
           $check_meta[$key] = ['type' => 'imap', 'ssl_type' => $type, 'source' => $source, 'score' => 80];
         }
 
         // Add MX host checks for SMTP
-        foreach (
-          [
-            [465, true,  'ssl'],
-            [587, false, 'starttls'],
-          ] as [$port, $ssl, $type]
-        ) {
+        foreach ([
+          [465, true,  'ssl'],
+          [587, false, 'starttls'],
+        ] as [$port, $ssl, $type]) {
           $key = "{$mx_host}:{$port}";
           $checks[] = ['host' => $mx_host, 'port' => $port, 'ssl' => $ssl];
           $check_meta[$key] = ['type' => 'smtp', 'ssl_type' => $type, 'source' => $source, 'score' => 80];
@@ -635,12 +639,10 @@ class AutoDetector
     // Add SPF hosts checks for SMTP
     $spf_hosts = $this->extract_spf_hosts($domain);
     foreach ($spf_hosts as $spf_host) {
-      foreach (
-        [
-          [465, true,  'ssl'],
-          [587, false, 'starttls'],
-        ] as [$port, $ssl, $type]
-      ) {
+      foreach ([
+        [465, true,  'ssl'],
+        [587, false, 'starttls'],
+      ] as [$port, $ssl, $type]) {
         $key = "{$spf_host}:{$port}";
         if (!isset($check_meta[$key])) { // Avoid duplicates
           $checks[] = ['host' => $spf_host, 'port' => $port, 'ssl' => $ssl];
