@@ -9,6 +9,12 @@ class AutoDetector
   private int $timeout_http = 10;
   private int $timeout_tcp = 3;
 
+  /** @var bool Verify SSL certificates (disable only for testing!) */
+  private bool $verify_ssl = true;
+
+  /** @var bool Allow connections to private/internal IP ranges */
+  private bool $allow_private_ips = false;
+
   /** @var object|null PSR-3 Logger */
   private ?object $logger = null;
 
@@ -22,6 +28,12 @@ class AutoDetector
     }
     if (isset($options['timeout_tcp'])) {
       $this->timeout_tcp = (int) $options['timeout_tcp'];
+    }
+    if (isset($options['verify_ssl'])) {
+      $this->verify_ssl = (bool) $options['verify_ssl'];
+    }
+    if (isset($options['allow_private_ips'])) {
+      $this->allow_private_ips = (bool) $options['allow_private_ips'];
     }
     if (isset($options['logger']) && is_object($options['logger'])) {
       $this->logger = $options['logger'];
@@ -76,14 +88,16 @@ class AutoDetector
     ];
 
     foreach ($getters as $getter) {
-      // Autodiscover requires email, skip otherwise
-      if ($getter === 'get_from_microsoft_autodiscover' && $email === null) {
-        continue;
-      }
-
       $this->log('debug', "Strategy: {$getter}", ['domain' => $domain]);
 
-      $result = $getter === 'get_from_microsoft_autodiscover' ? $this->$getter($email) : $this->$getter($domain);
+      if ($getter === 'get_from_microsoft_autodiscover') {
+        if (!$email) {
+          continue;
+        }
+        $result = $this->get_from_microsoft_autodiscover($email);
+      } else {
+        $result = $this->$getter($domain);
+      }
 
       $imap_count = count($result['imap']);
       $smtp_count = count($result['smtp']);
@@ -102,7 +116,7 @@ class AutoDetector
       $best_imap = $result['imap'] !== [] ? max(array_column($result['imap'], 'score')) : 0;
       $best_smtp = $result['smtp'] !== [] ? max(array_column($result['smtp'], 'score')) : 0;
 
-      if ($best_imap > $threshold && $best_smtp > $threshold) {
+      if ($best_imap >= $threshold && $best_smtp >= $threshold) {
         $this->log('info', 'Threshold reached, stopping early', [
           'getter' => $getter,
           'best_imap' => $best_imap,
@@ -150,12 +164,12 @@ class AutoDetector
     $url = "https://autoconfig.thunderbird.net/v1.1/{$domain}";
     $xml = $this->http_get($url);
 
-    if ($xml === false || $xml === '') {
+    if (!$xml) {
       return $result;
     }
 
     $config = @simplexml_load_string($xml);
-    if ($config === false) {
+    if (!$config) {
       return $result;
     }
 
@@ -308,17 +322,19 @@ class AutoDetector
 
     // Get MX host (lowest priority)
     usort($mx_records, static fn($a, $b) => $a['pri'] <=> $b['pri']);
-    $mx_host = strtolower(rtrim($mx_records[0]['target'], '.'));
+    foreach ($mx_records as $mx) {
+      $mx_host = strtolower(rtrim($mx['target'], '.'));
 
-    // Match known providers
-    foreach ($known_providers as $pattern => $config) {
-      if (str_contains($mx_host, $pattern)) {
-        $this->log('debug', 'Known MX match', ['mx' => $mx_host, 'pattern' => $pattern]);
+      // Match known providers
+      foreach ($known_providers as $pattern => $config) {
+        if (str_contains($mx_host, $pattern)) {
+          $this->log('debug', 'Known MX match', ['mx' => $mx_host, 'pattern' => $pattern]);
 
-        return [
-          'imap' => [array_merge($config['imap'], ['source' => $source, 'score' => 92])],
-          'smtp' => [array_merge($config['smtp'], ['source' => $source, 'score' => 92])],
-        ];
+          return [
+            'imap' => [array_merge($config['imap'], ['source' => $source, 'score' => 92])],
+            'smtp' => [array_merge($config['smtp'], ['source' => $source, 'score' => 92])],
+          ];
+        }
       }
     }
 
@@ -587,36 +603,44 @@ class AutoDetector
 
     if ($mx_records) {
       usort($mx_records, static fn($a, $b) => $a['pri'] <=> $b['pri']);
-      $mx_host = rtrim($mx_records[0]['target'], '.');
+      foreach ($mx_records as $mx) {
+        $mx_host = rtrim($mx['target'], '.');
 
-      // Add MX host checks for IMAP
-      foreach ([
-        [993, true,  'ssl'],
-        [143, false, 'starttls'],
-      ] as [$port, $ssl, $type]) {
-        $key = "{$mx_host}:{$port}";
-        $checks[] = ['host' => $mx_host, 'port' => $port, 'ssl' => $ssl];
-        $check_meta[$key] = ['type' => 'imap', 'ssl_type' => $type, 'source' => $source, 'score' => 80];
-      }
+        // Add MX host checks for IMAP
+        foreach (
+          [
+            [993, true,  'ssl'],
+            [143, false, 'starttls'],
+          ] as [$port, $ssl, $type]
+        ) {
+          $key = "{$mx_host}:{$port}";
+          $checks[] = ['host' => $mx_host, 'port' => $port, 'ssl' => $ssl];
+          $check_meta[$key] = ['type' => 'imap', 'ssl_type' => $type, 'source' => $source, 'score' => 80];
+        }
 
-      // Add MX host checks for SMTP
-      foreach ([
-        [465, true,  'ssl'],
-        [587, false, 'starttls'],
-      ] as [$port, $ssl, $type]) {
-        $key = "{$mx_host}:{$port}";
-        $checks[] = ['host' => $mx_host, 'port' => $port, 'ssl' => $ssl];
-        $check_meta[$key] = ['type' => 'smtp', 'ssl_type' => $type, 'source' => $source, 'score' => 80];
+        // Add MX host checks for SMTP
+        foreach (
+          [
+            [465, true,  'ssl'],
+            [587, false, 'starttls'],
+          ] as [$port, $ssl, $type]
+        ) {
+          $key = "{$mx_host}:{$port}";
+          $checks[] = ['host' => $mx_host, 'port' => $port, 'ssl' => $ssl];
+          $check_meta[$key] = ['type' => 'smtp', 'ssl_type' => $type, 'source' => $source, 'score' => 80];
+        }
       }
     }
 
     // Add SPF hosts checks for SMTP
     $spf_hosts = $this->extract_spf_hosts($domain);
     foreach ($spf_hosts as $spf_host) {
-      foreach ([
-        [465, true,  'ssl'],
-        [587, false, 'starttls'],
-      ] as [$port, $ssl, $type]) {
+      foreach (
+        [
+          [465, true,  'ssl'],
+          [587, false, 'starttls'],
+        ] as [$port, $ssl, $type]
+      ) {
         $key = "{$spf_host}:{$port}";
         if (!isset($check_meta[$key])) { // Avoid duplicates
           $checks[] = ['host' => $spf_host, 'port' => $port, 'ssl' => $ssl];
@@ -850,6 +874,13 @@ class AutoDetector
       return $cached;
     }
 
+    // SSRF protection: check if URL points to private IP
+    if (!$this->allow_private_ips && $this->url_points_to_private_ip($url)) {
+      $this->log('warning', 'Blocked request to private IP', ['url' => $url]);
+      $this->cache_set($cache_key, false);
+      return false;
+    }
+
     $this->log('debug', 'HTTP GET', ['url' => $url]);
 
     $ch = curl_init();
@@ -862,8 +893,8 @@ class AutoDetector
       CURLOPT_RETURNTRANSFER => true,
       CURLOPT_FOLLOWLOCATION => true,
       CURLOPT_TIMEOUT => $this->timeout_http,
-      CURLOPT_SSL_VERIFYPEER => false,
-      CURLOPT_SSL_VERIFYHOST => false,
+      CURLOPT_SSL_VERIFYPEER => $this->verify_ssl,
+      CURLOPT_SSL_VERIFYHOST => $this->verify_ssl ? 2 : 0,
       CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
     ]);
 
@@ -891,6 +922,13 @@ class AutoDetector
       return $cached;
     }
 
+    // SSRF protection: check if URL points to private IP
+    if (!$this->allow_private_ips && $this->url_points_to_private_ip($url)) {
+      $this->log('warning', 'Blocked POST request to private IP', ['url' => $url]);
+      $this->cache_set($cache_key, false);
+      return false;
+    }
+
     $this->log('debug', 'HTTP POST', ['url' => $url]);
 
     $ch = curl_init();
@@ -903,8 +941,8 @@ class AutoDetector
       CURLOPT_RETURNTRANSFER => true,
       CURLOPT_FOLLOWLOCATION => true,
       CURLOPT_TIMEOUT => $this->timeout_http,
-      CURLOPT_SSL_VERIFYPEER => false,
-      CURLOPT_SSL_VERIFYHOST => false,
+      CURLOPT_SSL_VERIFYPEER => $this->verify_ssl,
+      CURLOPT_SSL_VERIFYHOST => $this->verify_ssl ? 2 : 0,
       CURLOPT_POST => true,
       CURLOPT_POSTFIELDS => $body,
       CURLOPT_HTTPHEADER => [
@@ -1112,13 +1150,20 @@ class AutoDetector
         continue;
       }
 
+      // SSRF protection: block private IPs
+      if (!$this->allow_private_ips && $this->is_private_ip($ip)) {
+        $results[$key]['error'] = 'Private IP blocked';
+        $this->log('warning', 'Blocked TCP connection to private IP', ['host' => $host, 'ip' => $ip]);
+        continue;
+      }
+
       $address = $use_ssl ? "ssl://{$ip}" : "tcp://{$ip}";
 
       $context = stream_context_create([
         'ssl' => [
-          'verify_peer' => false,
-          'verify_peer_name' => false,
-          'allow_self_signed' => true,
+          'verify_peer' => $this->verify_ssl,
+          'verify_peer_name' => $this->verify_ssl,
+          'allow_self_signed' => !$this->verify_ssl,
         ],
       ]);
 
@@ -1233,13 +1278,26 @@ class AutoDetector
       'error' => null,
     ];
 
+    // SSRF protection: resolve and check for private IP
+    $ip = @gethostbyname($domain_or_ip);
+    if ($ip === $domain_or_ip && !filter_var($domain_or_ip, FILTER_VALIDATE_IP)) {
+      $result['error'] = 'DNS resolution failed';
+      return $result;
+    }
+
+    if (!$this->allow_private_ips && $this->is_private_ip($ip)) {
+      $result['error'] = 'Private IP blocked';
+      $this->log('warning', 'Blocked TCP connection to private IP', ['host' => $domain_or_ip, 'ip' => $ip]);
+      return $result;
+    }
+
     $address = $use_ssl ? "ssl://{$domain_or_ip}" : "tcp://{$domain_or_ip}";
 
     $context = stream_context_create([
       'ssl' => [
-        'verify_peer' => false,
-        'verify_peer_name' => false,
-        'allow_self_signed' => true,
+        'verify_peer' => $this->verify_ssl,
+        'verify_peer_name' => $this->verify_ssl,
+        'allow_self_signed' => !$this->verify_ssl,
       ],
     ]);
 
@@ -1275,6 +1333,70 @@ class AutoDetector
     fclose($socket);
 
     return $result;
+  }
+
+  /**
+   * Checks if an IP address is private/internal
+   * @param string $ip The IP address to check
+   * @return bool True if the IP is private/internal
+   */
+  private function is_private_ip(string $ip): bool
+  {
+    // Check for private IPv4 ranges and special addresses
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+      // filter_var with FILTER_FLAG_NO_PRIV_RANGE and FILTER_FLAG_NO_RES_RANGE
+      // returns false if the IP is private or reserved
+      $is_public = filter_var(
+        $ip,
+        FILTER_VALIDATE_IP,
+        FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
+      );
+
+      return $is_public === false;
+    }
+
+    // Check for private IPv6 ranges
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+      $is_public = filter_var(
+        $ip,
+        FILTER_VALIDATE_IP,
+        FILTER_FLAG_IPV6 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
+      );
+
+      return $is_public === false;
+    }
+
+    // Not a valid IP - treat as potentially dangerous
+    return true;
+  }
+
+  /**
+   * Checks if a URL points to a private IP address
+   * @param string $url The URL to check
+   * @return bool True if the URL resolves to a private IP
+   */
+  private function url_points_to_private_ip(string $url): bool
+  {
+    $parsed = parse_url($url);
+    if ($parsed === false || !isset($parsed['host'])) {
+      return true; // Invalid URL - block it
+    }
+
+    $host = $parsed['host'];
+
+    // If it's already an IP, check directly
+    if (filter_var($host, FILTER_VALIDATE_IP)) {
+      return $this->is_private_ip($host);
+    }
+
+    // Resolve hostname to IP
+    $ip = @gethostbyname($host);
+    if ($ip === $host) {
+      // DNS resolution failed - could be internal hostname, block it
+      return true;
+    }
+
+    return $this->is_private_ip($ip);
   }
 
   /**
