@@ -1119,6 +1119,15 @@ class AutoDetector
 
   /**
    * Batch TCP check - tests multiple host/port combinations in parallel
+   *
+   * Fully non-blocking state machine (connect -> optional TLS handshake ->
+   * banner read) with hard deadlines. The connect MUST use the tcp://
+   * transport: the ssl:// wrapper does not support STREAM_CLIENT_ASYNC_CONNECT
+   * and silently falls back to a synchronous connect + handshake that ignores
+   * the timeout argument (observed: 20s+ per check against firewalled hosts,
+   * hanging PHP-FPM workers indefinitely). TLS is therefore negotiated after
+   * the async connect via non-blocking stream_socket_enable_crypto().
+   *
    * @param array $checks Array of ['host' => ..., 'port' => ..., 'ssl' => bool]
    * @return array Results indexed by "host:port"
    */
@@ -1127,6 +1136,13 @@ class AutoDetector
     $results = [];
     $sockets = [];
     $socket_meta = [];
+
+    $now = microtime(true);
+    $connect_deadline = $now + $this->timeout_tcp;
+    // Extra window after connect for TLS handshake + banner (was previously
+    // the 1s blocking banner read timeout).
+    $banner_window = 1.0;
+    $hard_deadline = $connect_deadline + $banner_window;
 
     // Initialize results and prepare connections
     foreach ($checks as $check) {
@@ -1159,22 +1175,23 @@ class AutoDetector
         continue;
       }
 
-      $address = $use_ssl ? "ssl://{$ip}" : "tcp://{$ip}";
-
+      // peer_name: we connect to the IP, so SNI + certificate verification
+      // need the original hostname.
       $context = stream_context_create([
         'ssl' => [
           'verify_peer' => $this->verify_ssl,
           'verify_peer_name' => $this->verify_ssl,
           'allow_self_signed' => !$this->verify_ssl,
+          'peer_name' => $host,
         ],
       ]);
 
       $errno = null;
       $errstr = null;
 
-      // Non-blocking connect
+      // Non-blocking connect (always tcp://, see docblock)
       $socket = @stream_socket_client(
-        "{$address}:{$port}",
+        "tcp://{$ip}:{$port}",
         $errno,
         $errstr,
         0, // 0 timeout for non-blocking
@@ -1189,72 +1206,111 @@ class AutoDetector
 
       stream_set_blocking($socket, false);
       $sockets[$key] = $socket;
-      $socket_meta[$key] = ['connected' => false];
+      $socket_meta[$key] = [
+        'state' => 'connecting',
+        'ssl' => $use_ssl,
+        'deadline' => $connect_deadline,
+      ];
     }
 
-    if ($sockets === []) {
-      return $results;
-    }
-
-    // Wait for connections with stream_select
-    $timeout_sec = $this->timeout_tcp;
-    $start_time = microtime(true);
-
-    while ($sockets !== [] && (microtime(true) - $start_time) < $timeout_sec) {
-      $read = $sockets;
-      $write = $sockets;
+    while ($sockets !== [] && microtime(true) < $hard_deadline) {
+      $read = [];
+      $write = [];
       $except = null;
 
-      $remaining = $timeout_sec - (microtime(true) - $start_time);
-      if ($remaining <= 0) {
-        break;
+      foreach ($sockets as $key => $socket) {
+        $state = $socket_meta[$key]['state'];
+        if ($state === 'connecting') {
+          $write[$key] = $socket;
+        } elseif ($state === 'tls') {
+          // Handshake progresses on both readable and writable events
+          $read[$key] = $socket;
+          $write[$key] = $socket;
+        } else { // banner
+          $read[$key] = $socket;
+        }
       }
 
-      $select_result = @stream_select(
-        $read,
-        $write,
-        $except,
-        (int) $remaining,
-        (int) (($remaining - (int) $remaining) * 1000000),
-      );
+      // Short select slices so per-socket deadlines are enforced even when
+      // nothing becomes ready.
+      $select_result = @stream_select($read, $write, $except, 0, 200_000);
 
       if ($select_result === false) {
         break;
       }
 
-      // Check writable sockets (connection established or failed)
-      foreach ($write as $socket) {
-        $key = array_search($socket, $sockets, true);
-        if ($key === false) {
-          continue;
-        }
+      $now = microtime(true);
+      $ready = $read + $write; // stream_select preserves keys
 
-        // Mark as connected and try to read banner
-        if (!$socket_meta[$key]['connected']) {
-          $socket_meta[$key]['connected'] = true;
-
-          // Connection successful - try to read banner
-          stream_set_blocking($socket, true);
-          stream_set_timeout($socket, 1); // Short timeout for banner read
-
-          $banner = @fread($socket, 4096);
-
-          $results[$key]['success'] = true;
-
-          if ($banner !== false && strlen($banner) > 0) {
-            $results[$key]['banner'] = trim($banner);
-            $results[$key]['service'] = $this->detect_service($banner, $results[$key]['port']);
+      foreach ($sockets as $key => $socket) {
+        if (array_key_exists($key, $ready)) {
+          if ($socket_meta[$key]['state'] === 'connecting') {
+            // Async connect finished - distinguish success from refusal
+            if (@stream_socket_get_name($socket, true) === false) {
+              $results[$key]['error'] = 'Connection failed';
+              fclose($socket);
+              unset($sockets[$key]);
+              continue;
+            }
+            $socket_meta[$key]['state'] = $socket_meta[$key]['ssl'] ? 'tls' : 'banner';
+            $socket_meta[$key]['deadline'] = $now + $banner_window;
+            if (!$socket_meta[$key]['ssl']) {
+              $results[$key]['success'] = true;
+            }
           }
 
+          if ($socket_meta[$key]['state'] === 'tls') {
+            $crypto = @stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+            if ($crypto === true) {
+              $socket_meta[$key]['state'] = 'banner';
+              $results[$key]['success'] = true;
+            } elseif ($crypto === false) {
+              $results[$key]['error'] = 'TLS handshake failed';
+              fclose($socket);
+              unset($sockets[$key]);
+              continue;
+            }
+
+            // 0: handshake in progress, retry on next loop iteration
+          }
+
+          if ($socket_meta[$key]['state'] === 'banner' && array_key_exists($key, $read)) {
+            $banner = @fread($socket, 4096);
+            if (is_string($banner) && strlen($banner) > 0) {
+              $results[$key]['banner'] = trim($banner);
+              $results[$key]['service'] = $this->detect_service($banner, $results[$key]['port']);
+              fclose($socket);
+              unset($sockets[$key]);
+              continue;
+            }
+            if (feof($socket)) {
+              // Server closed without banner - connection itself succeeded
+              fclose($socket);
+              unset($sockets[$key]);
+              continue;
+            }
+          }
+        }
+
+        // Per-socket deadline
+        if ($now >= $socket_meta[$key]['deadline']) {
+          if ($socket_meta[$key]['state'] === 'connecting') {
+            $results[$key]['error'] = 'Connection timed out';
+          } elseif ($socket_meta[$key]['state'] === 'tls') {
+            $results[$key]['error'] = 'TLS handshake timed out';
+          }
+          // banner state: no banner received, but connect succeeded
           fclose($socket);
           unset($sockets[$key]);
         }
       }
     }
 
-    // Close remaining sockets (timed out)
+    // Close remaining sockets (hard deadline reached)
     foreach ($sockets as $key => $socket) {
-      $results[$key]['error'] = 'Connection timed out';
+      if (!$results[$key]['success']) {
+        $results[$key]['error'] = 'Connection timed out';
+      }
       @fclose($socket);
     }
 
