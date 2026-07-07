@@ -24,7 +24,13 @@ jobs:
         run: composer install --no-interaction --prefer-dist
 
       - name: Install Mago
-        run: curl --proto '=https' --tlsv1.2 -sSf https://carthage.software/mago.sh | bash
+        # Version gepinnt: der Installer holt "latest" sonst über die anonyme
+        # GitHub-API (Rate-Limit auf Runner-IPs) und neue Mago-Releases können
+        # neue Regeln einführen. GH_TOKEN: der Installer verifiziert die Build-
+        # Attestation via vorinstalliertem `gh`, das auf Runnern ein Token braucht.
+        run: curl --proto '=https' --tlsv1.2 -sSf https://carthage.software/mago.sh | bash -s -- --version=1.42.0
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Check formatting
         run: mago fmt --check
