@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0] - 2026-10-23
+- Security: HTTP requests (autoconfig, ISPDB, autodiscover) no longer follow
+  redirects blindly. New `SafeHttp` client: only http/https on ports 80/443,
+  every resolved address (A + AAAA) must be public, the connection is pinned
+  to the checked addresses via `CURLOPT_RESOLVE` (no DNS rebinding), at most
+  3 redirects with a fresh check per hop, connect/total timeout, 2 MiB body cap.
+- Security: the private-address check now covers carrier-grade NAT,
+  benchmarking/documentation ranges, multicast, `::`, site-local and IPv4
+  addresses embedded in IPv6 (IPv4-mapped, NAT64, 6to4, Teredo) — previously
+  only `filter_var` ranges and only the first IPv4 address of a host.
+- Removed the unused `get_tcp_info()` (connected by hostname, unpinned).
+- New option `trusted_ips` (tests only) and `resolver` (custom DNS lookup).
+
 ## [0.3.1] - 2026-07-07
 - Fixed: TCP batch check no longer hangs indefinitely. The `ssl://` wrapper
   does not support `STREAM_CLIENT_ASYNC_CONNECT` and silently fell back to a
