@@ -40,3 +40,6 @@ jobs:
 
       - name: Run static analysis
         run: mago analyze
+
+      - name: SSRF guard checks
+        run: php tests/safe_http_test.php

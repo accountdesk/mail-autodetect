@@ -20,9 +20,10 @@ composer require accountdesk/mail-autodetect
 
 ### Option 2: Manual
 
-Copy `src/AutoDetector.php` into your project and include it:
+Copy `src/AutoDetector.php` and `src/SafeHttp.php` into your project and include them:
 
 ```php
+require_once 'path/to/SafeHttp.php';
 require_once 'path/to/AutoDetector.php';
 ```
 
@@ -178,10 +179,32 @@ if ($imap) {
 
 **Why this matters:** A malicious domain could configure autoconfig/autodiscover to point to an attacker-controlled server, potentially capturing credentials.
 
+### SSRF protection
+
+The domain is chosen by whoever types the email address, so every outgoing request is guarded
+(`MailAutodetect\SafeHttp`, also usable on its own):
+
+- only `http`/`https`, only ports 80 and 443, no credentials in the URL
+- the host is resolved (A + AAAA) and **every** address must be public — loopback, RFC 1918,
+  carrier-grade NAT, link-local incl. cloud metadata (`169.254.169.254`), multicast, reserved,
+  `::1`, `fc00::/7`, `fe80::/10` and IPv4 addresses embedded in IPv6 (`::ffff:`, NAT64, 6to4) are refused
+- the connection is pinned to the checked addresses (`CURLOPT_RESOLVE`), so a second DNS answer
+  cannot redirect it (DNS rebinding)
+- redirects are followed manually, at most 3, and each target is checked again
+- connect timeout, total timeout and a cap on the response size (2 MiB)
+
+TCP probes of the candidate servers connect to the checked IP address as well.
+
+`allow_private_ips => true` switches the address check off (intranet setups only).
+
 ## License
 
 MIT
 
 ## Testing
 
-This library uses static analysis (Mago) instead of unit tests. Network-dependent libraries like this are better validated through real-world usage than mocked tests.
+Static analysis (Mago) plus a self-contained check of the SSRF guard (starts a PHP built-in server for the redirect cases):
+
+```bash
+php tests/safe_http_test.php
+```
